@@ -1,0 +1,37 @@
+[package]
+name = "mdq-rg"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Read-only Markdown search with concise, source-linked excerpts for AI agents."
+repository = "https://github.com/akira993/mdq-rg"
+readme = "README.md"
+
+[[bin]]
+name = "mdrg"
+path = "src/main.rs"
+
+[lib]
+name = "mdq_rg"
+
+[dependencies]
+ignore = "0.4"
+rayon = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[profile.dev.package."*"]
+opt-level = 2
