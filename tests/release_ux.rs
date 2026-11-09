@@ -449,7 +449,14 @@ fn non_markdown_diagnostics_preserve_hidden_and_permanent_exclusions() {
         let output = run(root.path(), &["get", &format!("{name}:1-1")]);
         assert_eq!(output.status.code(), Some(1));
         let value: Value = serde_json::from_slice(&output.stderr).unwrap();
-        assert_eq!(value["error"]["code"], "not_found");
+        assert_eq!(
+            value["error"]["code"],
+            if name == ".hidden.txt" {
+                "unsupported_type"
+            } else {
+                "not_found"
+            }
+        );
         assert!(output.stdout.is_empty());
     }
     std::fs::write(root.path().join("mdrg.toml"), "roots = ['docs']\n").unwrap();
@@ -505,6 +512,21 @@ fn usage_errors_create_no_logs_and_runtime_errors_keep_existing_log_shape() {
     );
     assert_eq!(row["result"], serde_json::json!({"found":false}));
     assert_eq!(row["exit"], 1);
+    let output = Command::new(env!("CARGO_BIN_EXE_mdrg"))
+        .current_dir(root.path())
+        .env("HOME", root.path())
+        .env_remove("MDRG_NO_USAGE_LOG")
+        .env("XDG_STATE_HOME", state.path())
+        .arg("list")
+        .output()
+        .unwrap();
+    error(&output, "root_too_broad", 2);
+    let log = std::fs::read_to_string(state.path().join("mdrg/usage.jsonl")).unwrap();
+    assert_eq!(log.lines().count(), 2);
+    let row: Value = serde_json::from_str(log.lines().nth(1).unwrap()).unwrap();
+    assert_eq!(row["command"], "list");
+    assert_eq!(row["exit"], 2);
+    assert_eq!(row["result"], serde_json::json!({}));
 }
 
 #[test]

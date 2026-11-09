@@ -28,7 +28,7 @@ Each entry contains a timestamp, the CLI version, command name, working director
 
 On Unix, new log directories use mode `0700` and new log files use mode `0600`, subject to the process umask. Existing permissions are preserved. Logging failures produce a `usage_log_failed` warning on standard error without changing the command's exit status.
 
-To disable logging, set `usage_log = false` in `mdrg.toml` at the workspace root, or set the environment variable `MDRG_NO_USAGE_LOG=1`.
+To disable logging, set `usage_log = false` in `mdrg.toml` at the workspace root, or set the environment variable `MDRG_NO_USAGE_LOG=1`. When the root is home or an ancestor and causes `root_too_broad`, `mdrg.toml` is not read, so only `MDRG_NO_USAGE_LOG=1` disables that log entry.
 
 ## Supported platforms
 

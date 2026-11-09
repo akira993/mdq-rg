@@ -35,8 +35,8 @@ pub struct Args {
     pub timing: bool,
 }
 
-pub fn run(args: &Args, config: &Config) -> Outcome {
-    let mut outcome = Outcome {
+pub(crate) fn initial_outcome(args: &Args) -> Outcome {
+    Outcome {
         exit: 0,
         args: vec![
             ("q", LogValue::Str(args.q.clone())),
@@ -54,7 +54,11 @@ pub fn run(args: &Args, config: &Config) -> Outcome {
             ("max_tokens", LogValue::Int(args.max_tokens as i64)),
         ],
         result: Vec::new(),
-    };
+    }
+}
+
+pub fn run(args: &Args, config: &Config) -> Outcome {
+    let mut outcome = initial_outcome(args);
     match search(args, config) {
         Ok(result) => outcome.result = result,
         Err(error) => {

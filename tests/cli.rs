@@ -137,7 +137,10 @@ fn version_and_bad_arguments() {
     let root = fixture();
     let output = command(&root, &["--version"]);
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "mdrg 0.1.0");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        format!("mdrg {}", env!("CARGO_PKG_VERSION"))
+    );
     for args in [
         vec!["search", "--q", "x", "--unknown"],
         vec!["search", "--q", "x", "--scan", "oops"],

@@ -20,7 +20,7 @@ pub struct Args {
     pub no_ignore: bool,
 }
 
-pub fn run(args: &Args, config: &Config) -> Outcome {
+pub(crate) fn initial_outcome(args: &Args) -> Outcome {
     let mut outcome = Outcome {
         exit: 0,
         args: vec![
@@ -38,6 +38,11 @@ pub fn run(args: &Args, config: &Config) -> Outcome {
     if let Some(limit) = args.limit {
         outcome.args.push(("limit", LogValue::Int(limit as i64)));
     }
+    outcome
+}
+
+pub fn run(args: &Args, config: &Config) -> Outcome {
+    let mut outcome = initial_outcome(args);
     let Ok(root) = std::env::current_dir() else {
         report_stderr(format_args!(
             "{{\"error\":{{\"code\":\"read_error\",\"detail\":\"Cannot resolve the working directory.\"}}}}"

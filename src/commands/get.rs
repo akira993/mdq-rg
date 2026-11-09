@@ -30,6 +30,69 @@ fn normalize(path: &Path) -> PathBuf {
     result
 }
 
+pub(crate) fn resolve(candidate: &Path) -> PathBuf {
+    // Resolve existing ancestors too, including missing paths below symlinked directories.
+    let mut ancestor = candidate;
+    let mut suffix = Vec::new();
+    loop {
+        if let Ok(mut resolved) = ancestor.canonicalize() {
+            for part in suffix.iter().rev() {
+                resolved.push(part);
+            }
+            return normalize(&resolved);
+        }
+        if let (Some(parent), Some(part)) = (ancestor.parent(), ancestor.file_name()) {
+            suffix.push(part.to_owned());
+            ancestor = parent;
+        } else {
+            return normalize(candidate);
+        }
+    }
+}
+
+fn command(args: &Args, range: &str, root: Option<&Path>, hidden: bool) -> String {
+    let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
+    let mut command = "mdrg".to_owned();
+    if let Some(root) = root {
+        command.push_str(&format!(" --root {}", quote(&root.to_string_lossy())));
+    }
+    command.push_str(&format!(" get {}", quote(range)));
+    if args.hidden || hidden {
+        command.push_str(" --hidden");
+    }
+    if args.no_ignore {
+        command.push_str(" --no-ignore");
+    }
+    command
+}
+
+pub(crate) fn root_next(args: &Args) -> String {
+    let (name, range) = args
+        .range
+        .rsplit_once(':')
+        .map_or((args.range.as_str(), None), |(name, range)| {
+            (name, Some(range))
+        });
+    let root = std::env::current_dir().unwrap_or_default();
+    let resolved = resolve(&root.join(name));
+    parent_next(args, &resolved, range)
+}
+
+fn parent_next(args: &Args, resolved: &Path, range: Option<&str>) -> String {
+    let parent = resolved.parent().unwrap_or(resolved);
+    if walk::forbidden(resolved) {
+        "This path contains a permanently excluded name.".to_owned()
+    } else if crate::cli::root_too_broad(parent) {
+        "The requested document is not read with the current scope. Use a plain text reader such as cat or sed to read it.".to_owned()
+    } else {
+        let range = range.map_or_else(
+            || resolved.to_string_lossy().into_owned(),
+            |range| format!("{}:{range}", resolved.display()),
+        );
+        command(args, &range, Some(parent), false)
+    }
+}
+
 fn error(outcome: &mut Outcome, code: &str, detail: &str, exit: i32) {
     report_stderr(format_args!(
         "{{\"error\":{{\"code\":{},\"detail\":{}}}}}",
@@ -49,8 +112,8 @@ fn error_with_next(outcome: &mut Outcome, code: &str, detail: &str, next: &str) 
     outcome.exit = 1;
 }
 
-pub fn run(args: &Args, config: &Config) -> Outcome {
-    let mut outcome = Outcome {
+pub(crate) fn initial_outcome(args: &Args) -> Outcome {
+    Outcome {
         exit: 0,
         args: vec![
             ("range", LogValue::Str(args.range.clone())),
@@ -58,7 +121,11 @@ pub fn run(args: &Args, config: &Config) -> Outcome {
             ("no_ignore", LogValue::Bool(args.no_ignore)),
         ],
         result: vec![("found", LogValue::Bool(false))],
-    };
+    }
+}
+
+pub fn run(args: &Args, config: &Config, original_root: Option<&Path>) -> Outcome {
+    let mut outcome = initial_outcome(args);
     let parsed = args.range.rsplit_once(':').and_then(|(path, range)| {
         let (start, end) = range.split_once('-')?;
         if path.is_empty()
@@ -92,45 +159,13 @@ pub fn run(args: &Args, config: &Config) -> Outcome {
         return outcome;
     };
     let candidate = root.join(name);
-    // Resolve the closest existing ancestor as well, so missing outside paths
-    // and paths below symlinked directories receive the same boundary check.
-    let mut ancestor = candidate.as_path();
-    let mut suffix = Vec::new();
-    let resolved = loop {
-        if let Ok(mut resolved) = ancestor.canonicalize() {
-            for part in suffix.iter().rev() {
-                resolved.push(part);
-            }
-            break normalize(&resolved);
-        }
-        if let (Some(parent), Some(part)) = (ancestor.parent(), ancestor.file_name()) {
-            suffix.push(part.to_owned());
-            ancestor = parent;
-        } else {
-            break normalize(&candidate);
-        }
-    };
+    let resolved = resolve(&candidate);
     if !resolved.starts_with(&root) {
-        let next = if walk::forbidden(&resolved) {
-            "This path is inside a permanently excluded directory; mdrg does not read it."
-                .to_owned()
-        } else {
-            let parent = resolved.parent().unwrap_or(&resolved);
-            let range = format!("{}:{start}-{end}", resolved.display());
-            let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
-            let mut command = format!(
-                "mdrg --root {} get {}",
-                quote(&parent.to_string_lossy()),
-                quote(&range)
-            );
-            if args.hidden {
-                command.push_str(" --hidden");
-            }
-            if args.no_ignore {
-                command.push_str(" --no-ignore");
-            }
-            command
-        };
+        let next = parent_next(
+            args,
+            &resolved,
+            Some(args.range.rsplit_once(':').unwrap().1),
+        );
         error_with_next(
             &mut outcome,
             "outside_root",
@@ -167,6 +202,12 @@ pub fn run(args: &Args, config: &Config) -> Outcome {
                 .exclude
                 .iter()
                 .any(|pattern| walk::fnmatch(pattern, &relative))
+            && !config.exclude.iter().any(|pattern| {
+                walk::fnmatch(
+                    pattern,
+                    &resolved.strip_prefix(&root).unwrap().to_string_lossy(),
+                )
+            })
             && (if config.roots.is_empty() {
                 vec![root.clone()]
             } else {
@@ -177,21 +218,42 @@ pub fn run(args: &Args, config: &Config) -> Outcome {
                     .collect()
             })
             .iter()
-            .any(|start| {
-                resolved.strip_prefix(start).is_ok_and(|tail| {
-                    args.hidden
-                        || config.hidden
-                        || !tail
-                            .components()
-                            .any(|part| part.as_os_str().to_string_lossy().starts_with('.'))
-                })
-            })
+            .any(|start| resolved.starts_with(start))
         {
             error_with_next(
                 &mut outcome,
                 "unsupported_type",
                 "Only Markdown (.md) documents are supported.",
                 "Use a plain text reader such as cat or sed to read this file.",
+            );
+            return outcome;
+        }
+        if !options.hidden
+            && !walk::collect(
+                &root,
+                &walk::WalkOptions {
+                    no_ignore: true,
+                    ..options.clone()
+                },
+            )
+            .iter()
+            .any(|(path, _)| *path == relative)
+            && walk::collect(
+                &root,
+                &walk::WalkOptions {
+                    hidden: true,
+                    no_ignore: true,
+                    ..options.clone()
+                },
+            )
+            .iter()
+            .any(|(path, _)| *path == relative)
+        {
+            error_with_next(
+                &mut outcome,
+                "hidden",
+                "The requested document is excluded because its path is hidden.",
+                &command(args, &args.range, original_root, true),
             );
             return outcome;
         }
@@ -235,15 +297,30 @@ pub fn run(args: &Args, config: &Config) -> Outcome {
         }
     };
     let lines: Vec<_> = text.split_inclusive('\n').collect();
-    if start == 0 || end > lines.len() {
-        error(
-            &mut outcome,
-            "out_of_range",
-            "The requested lines are outside the document.",
-            1,
-        );
+    if start == 0 || start > lines.len() {
+        let (detail, next) = if lines.is_empty() {
+            (
+                "The requested document is empty (0 lines).".to_owned(),
+                "There are no lines to read in this document.".to_owned(),
+            )
+        } else {
+            (
+                format!(
+                    "The requested lines are outside the document ({} lines).",
+                    lines.len()
+                ),
+                command(
+                    args,
+                    &format!("{name}:1-{}", lines.len()),
+                    original_root,
+                    false,
+                ),
+            )
+        };
+        error_with_next(&mut outcome, "out_of_range", &detail, &next);
         return outcome;
     }
+    let end = end.min(lines.len());
     let sections = markdown::split(&path, &text);
     let heading = sections
         .iter()

@@ -31,6 +31,16 @@ pub enum Command {
     List(commands::list::Args),
 }
 
+pub(crate) fn root_too_broad(root: &Path) -> bool {
+    std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute())
+        .and_then(|home| home.canonicalize().ok())
+        .zip(root.canonicalize().ok())
+        .is_some_and(|(home, root)| home.starts_with(root))
+}
+
 fn paths_outside_root(path: &Path) -> bool {
     if path.is_absolute() {
         return !std::env::current_dir().is_ok_and(|root| {
@@ -82,6 +92,39 @@ pub fn main() {
         ));
         std::process::exit(2);
     }
+    if std::env::current_dir().is_ok_and(|root| root_too_broad(&root)) {
+        let (command, mut outcome, next) = match &cli.command {
+            Command::Search(args) => (
+                "search",
+                commands::search::initial_outcome(args),
+                "Run from a project directory or select a directory below HOME with --root DIR."
+                    .to_owned(),
+            ),
+            Command::Get(args) => (
+                "get",
+                commands::get::initial_outcome(args),
+                commands::get::root_next(args),
+            ),
+            Command::List(args) => (
+                "list",
+                commands::list::initial_outcome(args),
+                "Run from a project directory or select a directory below HOME with --root DIR."
+                    .to_owned(),
+            ),
+        };
+        crate::search::output::report_stderr(format_args!(
+            "{{\"error\":{{\"code\":\"root_too_broad\",\"detail\":\"The selected root is HOME or an ancestor of HOME.\",\"next\":[{}]}}}}",
+            crate::search::output::json_string(&next)
+        ));
+        outcome.exit = 2;
+        usage_log::record(
+            &Config::default(),
+            command,
+            &outcome,
+            start.elapsed().as_secs_f64() * 1000.0,
+        );
+        std::process::exit(2);
+    }
     let paths = match &cli.command {
         Command::Search(args) => &args.paths[..],
         Command::List(args) => &args.paths[..],
@@ -108,7 +151,10 @@ pub fn main() {
     };
     let (command, outcome) = match cli.command {
         Command::Search(args) => ("search", commands::search::run(&args, &config)),
-        Command::Get(args) => ("get", commands::get::run(&args, &config)),
+        Command::Get(args) => (
+            "get",
+            commands::get::run(&args, &config, cli.root.as_deref()),
+        ),
         Command::List(args) => ("list", commands::list::run(&args, &config)),
     };
     usage_log::record(

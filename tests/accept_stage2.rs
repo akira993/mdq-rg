@@ -365,7 +365,7 @@ denied_get!(
     get_rejects_hidden_document_by_default,
     ".secret.md",
     "",
-    "not_found"
+    "hidden"
 );
 denied_get!(
     get_rejects_non_markdown_document,
@@ -468,7 +468,15 @@ macro_rules! range_error {
     };
 }
 range_error!(get_rejects_start_beyond_last_line, "a.md:3-3");
-range_error!(get_rejects_end_beyond_last_line, "a.md:1-3");
+#[test]
+fn get_clamps_end_beyond_last_line() {
+    let p = Project::new();
+    p.write("a.md", "one\ntwo\n");
+    let out = p.run(&["get", "a.md:1-3"]);
+    status(&out, 0);
+    assert_eq!(rows(&out.stdout)[0]["lines"], serde_json::json!([1, 2]));
+    assert_eq!(rows(&out.stdout)[0]["text"], "one\ntwo\n");
+}
 
 #[test]
 fn get_always_excludes_git_even_with_override_flags() {
@@ -1130,7 +1138,7 @@ fn flag_expands_all_commands(path: &str, config: &str, flags: &[&str]) {
         if path == "ignored.md" {
             "ignored"
         } else {
-            "not_found"
+            "hidden"
         },
     );
 

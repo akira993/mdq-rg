@@ -2,8 +2,7 @@ use serde_json::Value;
 use std::path::Path;
 use std::process::{Command, Output};
 
-const EXCLUDED_ADVICE: &str =
-    "This path is inside a permanently excluded directory; mdrg does not read it.";
+const EXCLUDED_ADVICE: &str = "This path contains a permanently excluded name.";
 
 fn fixture() -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
@@ -97,12 +96,15 @@ fn outside_hidden_directory_keeps_replayable_advice() {
 
 #[cfg(unix)]
 #[test]
-fn non_markdown_symlink_to_hidden_directory_is_not_found() {
+fn non_markdown_symlink_to_hidden_directory_reports_type() {
     let root = fixture();
     std::fs::create_dir(root.path().join(".cfg")).unwrap();
     std::fs::write(root.path().join(".cfg/note.txt"), "body\n").unwrap();
     std::os::unix::fs::symlink(".cfg/note.txt", root.path().join("alias.txt")).unwrap();
-    failure(&run(root.path(), &["get", "alias.txt:1-1"]), "not_found");
+    failure(
+        &run(root.path(), &["get", "alias.txt:1-1"]),
+        "unsupported_type",
+    );
     failure(
         &run(root.path(), &["get", "alias.txt:1-1", "--hidden"]),
         "unsupported_type",

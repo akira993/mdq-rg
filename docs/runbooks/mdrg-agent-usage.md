@@ -7,9 +7,9 @@ mdrg search --q "what to look up" --top-k 5
 mdrg get "docs/example.md:10-24"
 ```
 
-Pass the `path` and `lines` of a search result to `get`. Check the real file before you base an edit or a decision on a result. When you need all of one file, read that file directly.
+Pass the `path` and `lines` of a search result to `get`. You may request an END beyond the document; if START is inside it, output stops at the last line. Check the real file before you base an edit or a decision on a result. When you need all of one file, read that file directly.
 
-To search or read another directory without changing the working directory, pass `--root DIR`; `--paths` patterns are then relative to that directory. When a failure includes `error.next`, follow it. Argument parsing and configuration loading errors are plain text; correct the indicated argument or TOML location.
+To search or read another directory without changing the working directory, pass `--root DIR`; `--paths` patterns are then relative to that directory. A root that resolves to home or an ancestor stops all three commands with `root_too_broad`. When a failure includes `error.next`, follow it. Argument parsing and configuration loading errors are plain text; correct the indicated argument or TOML location.
 
 To list or count every matching line, use `rg -n -F "text" -g '*.md'` or `rg -c -F "text" -g '*.md'`. This also applies across two or more Markdown documents. `mdrg search --mode exact` returns sections and stops at the result count and output budget; it does not list or count every matching line.
 

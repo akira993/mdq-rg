@@ -85,6 +85,34 @@ pub fn scoped_command(
     hidden: bool,
     no_ignore: bool,
 ) -> String {
+    if cause == "paths_matched_nothing"
+        && command == "Check the --paths patterns."
+        && paths
+            .iter()
+            .any(|pattern| std::path::Path::new(pattern).is_absolute())
+    {
+        let relative: Vec<_> = paths
+            .iter()
+            .filter_map(|pattern| {
+                let path = std::path::Path::new(pattern);
+                if path.is_absolute() {
+                    let root = std::env::current_dir().ok()?;
+                    crate::commands::get::resolve(path)
+                        .strip_prefix(root)
+                        .ok()
+                        .map(|p| shell_quote(&p.to_string_lossy()))
+                } else {
+                    Some(shell_quote(pattern))
+                }
+            })
+            .collect();
+        if !relative.is_empty() {
+            return format!(
+                "Use --paths patterns relative to the selected root: --paths {}.",
+                relative.join(" ")
+            );
+        }
+    }
     let mut command = command.to_owned();
     if !command.starts_with("mdrg ") {
         return command;

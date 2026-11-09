@@ -60,9 +60,13 @@ fn get_rejects_bad_ranges_and_missing_lines() {
     ] {
         failure(root.path(), range, "invalid_range", 2);
     }
-    for range in ["a.md:0-1", "a.md:2-2", "a.md:1-2"] {
+    for range in ["a.md:0-1", "a.md:2-2"] {
         failure(root.path(), range, "out_of_range", 1);
     }
+    assert_eq!(
+        rows(&run(root.path(), &["get", "a.md:1-2"]))[0]["lines"],
+        json!([1, 1])
+    );
     std::fs::write(root.path().join("empty.md"), "").unwrap();
     failure(root.path(), "empty.md:1-1", "out_of_range", 1);
 }
@@ -93,9 +97,8 @@ fn get_respects_ignore_hidden_permanent_exclusions_and_config() {
     );
     failure(root.path(), "ignored.md:1-1", "ignored", 1);
     failure(root.path(), "a.txt:1-1", "unsupported_type", 1);
-    for name in [".hidden.md", "missing.md"] {
-        failure(root.path(), &format!("{name}:1-1"), "not_found", 1);
-    }
+    failure(root.path(), ".hidden.md:1-1", "hidden", 1);
+    failure(root.path(), "missing.md:1-1", "not_found", 1);
     assert!(
         run(root.path(), &["get", "ignored.md:1-1", "--no-ignore"])
             .status

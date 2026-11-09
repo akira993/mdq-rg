@@ -97,7 +97,7 @@ impl Glob {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct WalkOptions {
     pub quiet: bool,
     pub hidden: bool,
