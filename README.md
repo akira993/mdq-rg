@@ -22,7 +22,7 @@ The CLI does not edit documents or make network requests. Compatibility with the
 
 ## Usage logs
 
-Usage logging is enabled by default for `search`, `get`, and `list`. Each command appends one JSON line to `$XDG_STATE_HOME/mdrg/usage.jsonl`. If `XDG_STATE_HOME` is unset or relative, the location is `$HOME/.local/state/mdrg/usage.jsonl`.
+Usage logging is enabled by default for `search`, `get`, and `list`. Each command appends one JSON line to `$XDG_STATE_HOME/mdrg/usage.jsonl` if `XDG_STATE_HOME` is absolute. If `XDG_STATE_HOME` is unset or relative and `HOME` is absolute, the location is `$HOME/.local/state/mdrg/usage.jsonl`. If neither is absolute, no log is written and a warning is emitted.
 
 Each entry contains a timestamp, the CLI version, command name, working directory path, command arguments (including the full search query), result counts or a found flag (an empty result object on search execution failure), elapsed time, and exit status. Document bodies and search excerpts are not logged. Logs stay on your machine and are not sent externally. Argument parsing and configuration errors are not logged.
 

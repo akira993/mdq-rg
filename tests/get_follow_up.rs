@@ -292,12 +292,28 @@ fn a5_and_a9_excluded_missing_and_symlink_paths_do_not_disclose_reasons() {
         assert_eq!(actual, absent);
     }
     #[cfg(unix)]
-    for name in [".h/link.md", "hidden-link.md", "alias.md", "alias.txt"] {
+    for name in ["alias.md", "alias.txt"] {
         for flags in [vec![], vec!["--hidden"], vec!["--hidden", "--no-ignore"]] {
             let range = format!("{name}:1-3");
             let mut args = vec!["get", &range];
             args.extend(flags);
             assert_eq!(error(&f.run(&f.project, &args), "not_found", 1), absent);
+        }
+    }
+    #[cfg(unix)]
+    for (name, target) in [(".h/link.md", "a.md"), ("hidden-link.md", ".h/doc.md")] {
+        for flags in [vec![], vec!["--hidden"], vec!["--hidden", "--no-ignore"]] {
+            let range = format!("{name}:1-3");
+            let direct_range = format!("{target}:1-3");
+            let mut args = vec!["get", &range];
+            args.extend(&flags);
+            let actual = f.run(&f.project, &args);
+            let mut direct_args = vec!["get", &direct_range];
+            direct_args.extend(&flags);
+            let direct = f.run(&f.project, &direct_args);
+            assert_eq!(actual.status.code(), direct.status.code());
+            assert_eq!(actual.stdout, direct.stdout);
+            assert_eq!(actual.stderr, direct.stderr);
         }
     }
     let err = error(

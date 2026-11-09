@@ -43,7 +43,6 @@ fn assert_permanent_exclusion(name: &str) {
         symlink(name, root.path().join("directory-alias")).unwrap();
         symlink(format!("{name}/note.md"), root.path().join("file-alias.md")).unwrap();
         excluded.extend([
-            format!("links/{name}/note.md"),
             "directory-alias/note.md".to_owned(),
             "file-alias.md".to_owned(),
         ]);
@@ -93,6 +92,18 @@ fn assert_permanent_exclusion(name: &str) {
             serde_json::from_slice::<Value>(&output.stdout).unwrap()["text"],
             "needle\n"
         );
+    }
+    #[cfg(unix)]
+    {
+        // REQ-005: a forbidden alias may point to an allowed final target.
+        let alias = format!("links/{name}/note.md:1-1");
+        let target = format!("{name}.local/note.md:1-1");
+        let alias = run(root.path(), &["get", &alias, "--hidden", "--no-ignore"]);
+        let target = run(root.path(), &["get", &target, "--hidden", "--no-ignore"]);
+        assert_eq!(alias.status.code(), Some(0), "{alias:?}");
+        assert_eq!(alias.status.code(), target.status.code());
+        assert_eq!(alias.stdout, target.stdout);
+        assert_eq!(alias.stderr, target.stderr);
     }
     let named_roots = vec![
         (name.to_owned(), "invalid root"),

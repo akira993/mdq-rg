@@ -2,6 +2,8 @@ use crate::config::Config;
 use crate::search::output::{json_string, report_stderr};
 use crate::usage_log::{LogValue, Outcome};
 use crate::{markdown, walk};
+use std::collections::{HashSet, VecDeque};
+use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 
@@ -50,6 +52,125 @@ pub(crate) fn resolve(candidate: &Path) -> PathBuf {
     }
 }
 
+struct LinkError {
+    kind: &'static str,
+    paths: Vec<PathBuf>,
+}
+
+fn final_target(candidate: &Path, root: &Path) -> Result<PathBuf, LinkError> {
+    #[cfg(target_os = "macos")]
+    const ELOOP: i32 = 62;
+    #[cfg(target_os = "linux")]
+    const ELOOP: i32 = 40;
+    let os_depth = match candidate.canonicalize() {
+        Ok(path) => return Ok(path),
+        Err(error) => {
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            {
+                error.raw_os_error() == Some(ELOOP)
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            {
+                let _ = error;
+                false
+            }
+        }
+    };
+    let mut paths = Vec::new();
+    let path = match expand_links(candidate, root, &mut paths) {
+        Ok(path) => path,
+        Err(kind) => return Err(LinkError { kind, paths }),
+    };
+    if os_depth {
+        Err(LinkError {
+            kind: "depth",
+            paths,
+        })
+    } else {
+        Ok(normalize(&path))
+    }
+}
+
+fn expand_links(
+    candidate: &Path,
+    root: &Path,
+    paths: &mut Vec<PathBuf>,
+) -> Result<PathBuf, &'static str> {
+    enum Step {
+        Part(OsString),
+        EndLink(PathBuf),
+    }
+    let mut pending: VecDeque<_> = candidate
+        .components()
+        .map(|part| Step::Part(part.as_os_str().to_owned()))
+        .collect();
+    let mut active = HashSet::new();
+    let mut followed = 0;
+    let mut path = PathBuf::new();
+    while let Some(step) = pending.pop_front() {
+        let part = match step {
+            Step::Part(part) => part,
+            Step::EndLink(link) => {
+                active.remove(&link);
+                continue;
+            }
+        };
+        if part == ".." {
+            path.pop();
+        } else if part != "." {
+            path.push(part);
+        }
+        // Canonical ancestors such as macOS /var are aliases of the root's
+        // ancestry. Retain scoped intermediate names before following links.
+        if path.starts_with(root) && path != root
+            || !path.canonicalize().is_ok_and(|real| root.starts_with(real))
+        {
+            let remaining: PathBuf = pending
+                .iter()
+                .filter_map(|step| match step {
+                    Step::Part(part) => Some(part),
+                    Step::EndLink(_) => None,
+                })
+                .collect();
+            paths.push(path.join(remaining));
+        }
+        if let Ok(target) = std::fs::read_link(&path) {
+            followed += 1;
+            if followed > 40 {
+                return Err("depth");
+            }
+            if !active.insert(path.clone()) {
+                return Err("cycle");
+            }
+            let link = path.clone();
+            path.pop();
+            let target = path.join(target);
+            pending.push_front(Step::EndLink(link));
+            for part in target.components().rev() {
+                pending.push_front(Step::Part(part.as_os_str().to_owned()));
+            }
+            path.clear();
+        }
+    }
+    Ok(path)
+}
+
+fn selected_path(root: &Path, path: &Path, config: &Config) -> bool {
+    path.strip_prefix(root).is_ok_and(|relative| {
+        !walk::forbidden(relative)
+            && !config
+                .exclude
+                .iter()
+                .any(|pattern| walk::fnmatch(pattern, &relative.to_string_lossy()))
+            && (config.roots.is_empty()
+                || config.roots.iter().any(|name| {
+                    root.join(name)
+                        .canonicalize()
+                        .is_ok_and(|start| path.starts_with(start))
+                }))
+    })
+}
+
 fn command(args: &Args, range: &str, root: Option<&Path>, hidden: bool) -> String {
     let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
     let mut command = "mdrg".to_owned();
@@ -74,7 +195,8 @@ pub(crate) fn root_next(args: &Args) -> String {
             (name, Some(range))
         });
     let root = std::env::current_dir().unwrap_or_default();
-    let resolved = resolve(&root.join(name));
+    let candidate = root.join(name);
+    let resolved = final_target(&candidate, &root).unwrap_or_else(|_| resolve(&candidate));
     parent_next(args, &resolved, range)
 }
 
@@ -159,7 +281,44 @@ pub fn run(args: &Args, config: &Config, original_root: Option<&Path>) -> Outcom
         return outcome;
     };
     let candidate = root.join(name);
-    let resolved = resolve(&candidate);
+    let mut prefix = PathBuf::new();
+    let follows_link = candidate.components().any(|part| {
+        prefix.push(part.as_os_str());
+        prefix.is_symlink()
+    });
+    let resolution = if follows_link {
+        final_target(&candidate, &root)
+    } else {
+        Ok(resolve(&candidate))
+    };
+    let resolved = match resolution {
+        Ok(path) => path,
+        Err(failure) => {
+            if failure
+                .paths
+                .iter()
+                .all(|path| selected_path(&root, path, config))
+            {
+                error_with_next(
+                    &mut outcome,
+                    "read_error",
+                    &format!(
+                        "Cannot resolve the requested path: symbolic link {}.",
+                        failure.kind
+                    ),
+                    "Check the symbolic link targets, fix the cycle or excessive chain depth, and retry.",
+                );
+            } else {
+                error(
+                    &mut outcome,
+                    "not_found",
+                    "The requested document is not in the selected documents.",
+                    1,
+                );
+            }
+            return outcome;
+        }
+    };
     if !resolved.starts_with(&root) {
         let next = parent_next(
             args,
@@ -175,11 +334,27 @@ pub fn run(args: &Args, config: &Config, original_root: Option<&Path>) -> Outcom
         return outcome;
     }
     let lexical = normalize(&candidate);
-    let relative = lexical
+    let requested = if follows_link { &resolved } else { &lexical };
+    let relative = requested
         .strip_prefix(&root)
         .unwrap_or_else(|_| resolved.strip_prefix(&root).unwrap())
         .to_string_lossy()
         .replace('\\', "/");
+    // Guidance must match a direct request for the final target, while the log
+    // above keeps the caller's original range. Preserve ordinary path spelling.
+    let target_range;
+    let target_args;
+    let (args, name) = if follows_link && lexical != resolved {
+        target_range = format!("{}:{}", relative, args.range.rsplit_once(':').unwrap().1);
+        target_args = Args {
+            range: target_range,
+            hidden: args.hidden,
+            no_ignore: args.no_ignore,
+        };
+        (&target_args, relative.as_str())
+    } else {
+        (args, name)
+    };
     let options = walk::WalkOptions {
         quiet: true,
         hidden: args.hidden || config.hidden,
@@ -192,33 +367,16 @@ pub fn run(args: &Args, config: &Config, original_root: Option<&Path>) -> Outcom
         .into_iter()
         .find(|(path, _)| *path == relative)
     else {
-        if lexical.is_file()
-            && lexical
+        if requested.is_file()
+            && requested
                 .extension()
                 .is_none_or(|extension| extension != "md")
             && !walk::forbidden(Path::new(&relative))
-            && !walk::forbidden(resolved.strip_prefix(&root).unwrap())
             && !config
                 .exclude
                 .iter()
                 .any(|pattern| walk::fnmatch(pattern, &relative))
-            && !config.exclude.iter().any(|pattern| {
-                walk::fnmatch(
-                    pattern,
-                    &resolved.strip_prefix(&root).unwrap().to_string_lossy(),
-                )
-            })
-            && (if config.roots.is_empty() {
-                vec![root.clone()]
-            } else {
-                config
-                    .roots
-                    .iter()
-                    .filter_map(|name| root.join(name).canonicalize().ok())
-                    .collect()
-            })
-            .iter()
-            .any(|start| resolved.starts_with(start))
+            && selected_path(&root, &resolved, config)
         {
             error_with_next(
                 &mut outcome,

@@ -70,8 +70,9 @@ fn append(command: &str, outcome: &Outcome, elapsed_ms: f64) -> io::Result<()> {
         .filter(|path| path.is_absolute())
         .or_else(|| {
             std::env::var_os("HOME")
-                .filter(|home| !home.is_empty())
-                .map(|home| PathBuf::from(home).join(".local/state"))
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute())
+                .map(|home| home.join(".local/state"))
         })
         .ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotFound, "No state directory is available")

@@ -9,9 +9,11 @@ mdrg get "docs/example.md:10-24"
 
 Pass the `path` and `lines` of a search result to `get`. You may request an END beyond the document; if START is inside it, output stops at the last line. Check the real file before you base an edit or a decision on a result. When you need all of one file, read that file directly.
 
+`get` through a symbolic link matches its final target, names that target in a successful `path`, and returns `read_error` or `not_found` for cycles.
+
 To search or read another directory without changing the working directory, pass `--root DIR`; `--paths` patterns are then relative to that directory. A root that resolves to home or an ancestor stops all three commands with `root_too_broad`. When a failure includes `error.next`, follow it. Argument parsing and configuration loading errors are plain text; correct the indicated argument or TOML location.
 
-To list or count every matching line, use `rg -n -F "text" -g '*.md'` or `rg -c -F "text" -g '*.md'`. This also applies across two or more Markdown documents. `mdrg search --mode exact` returns sections and stops at the result count and output budget; it does not list or count every matching line.
+To list or count every matching line, use `rg -n -F "text" -g '*.md'` or `rg -c -F "text" -g '*.md'`. This also applies across two or more Markdown documents. `mdrg search --mode exact` returns sections and stops at the result count and output budget, except that the first result may exceed the budget; it does not list or count every matching line.
 
 For hidden directories such as `.claude/`, pass `--hidden` on both `search` and `get`, unless `mdrg.toml` sets `hidden = true` or names the directory in `roots` (hidden entries inside a named directory still need `--hidden`). Below the working directory or `--root`, mdrg never searches paths with a component named `.git`, `node_modules`, `.ssh`, `.aws`, `.gnupg`, or `.env`, regardless of case.
 
@@ -26,6 +28,6 @@ mdrg needs no index and no setup step. It does not read `mdq.toml`. Set the sear
 
 mdrg searches files with the lowercase `.md` extension. It skips hidden files by default.
 
-Logs that Git ignores, such as `docs/logs/`, do not appear in results unless `roots` in `mdrg.toml` names their directory. To search them without that setting, run `rg -n "term" docs/logs` and read the file directly.
+Without `--no-ignore`, logs that Git ignores, such as `docs/logs/`, do not appear in results unless `roots` in `mdrg.toml` names their directory. To search them without that setting, run `rg -n "term" docs/logs` and read the file directly.
 
 Git ignore rules apply only inside a Git working tree; outside one, documents your `.gitignore` would exclude appear in results. Do not use `--no-ignore` without the user's permission, and check first that the target contains no secrets and no generated files.

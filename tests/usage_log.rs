@@ -163,6 +163,32 @@ fn usage_missing_state_location_warns_without_failing() {
 }
 
 #[test]
+fn usage_relative_home_warns_without_changing_work_directory() {
+    let work = TempDir::new().unwrap();
+    let state = TempDir::new().unwrap();
+    fs::write(work.path().join("note.md"), "# Greeting\nhello\n").unwrap();
+    let entries = || {
+        let mut paths: Vec<_> = fs::read_dir(work.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        paths.sort();
+        paths
+    };
+    let before = entries();
+    let baseline = run(command(work.path(), state.path()).args(["search", "--q", "hello"]));
+    assert_eq!(rows(state.path()).len(), 1);
+    let output = run(command(work.path(), state.path())
+        .env_remove("XDG_STATE_HOME")
+        .env("HOME", "rel")
+        .args(["search", "--q", "hello"]));
+    assert_eq!(output.status.code(), baseline.status.code());
+    assert_eq!(entries(), before);
+    assert_eq!(String::from_utf8_lossy(&output.stderr).lines().count(), 1);
+    assert_warning(&output);
+}
+
+#[test]
 fn usage_unwritable_location_warns_without_failing() {
     let work = TempDir::new().unwrap();
     let state = TempDir::new().unwrap();
